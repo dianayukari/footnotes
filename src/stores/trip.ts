@@ -2,7 +2,8 @@ import { computed, ref } from 'vue'
 import { defineStore } from 'pinia'
 import { supabase } from '@/lib/supabase'
 import { todayIso } from '@/lib/format'
-import type { ResolvedPlace } from '@/lib/places'
+import { fetchOpeningHours, type ResolvedPlace } from '@/lib/places'
+import type { Json } from '@/types/database'
 import type { Day, Place, Stop, Trip } from '@/types/db'
 import type { EndpointKind, TravelMode } from '@/types/itinerary'
 
@@ -29,6 +30,8 @@ export const useTripStore = defineStore('trip', () => {
   // Stops inserted with this default take the suggested visit length once it is known.
   const DEFAULT_DURATION = 60
   const infoRequests = new Map<string, Promise<Place | undefined>>()
+  // Places whose opening hours were already looked up this session, so a failure is not retried in a loop.
+  const hoursAttempted = new Set<string>()
 
   const day = computed(() => days.value.find((d) => d.id === dayId.value))
   const dayIndex = computed(() => days.value.findIndex((d) => d.id === dayId.value))
@@ -127,7 +130,40 @@ export const useTripStore = defineStore('trip', () => {
       .order('position')
     if (fail(e?.message)) return
     // A newer selection may have replaced this one while the request was in flight.
-    if (dayId.value === id) stops.value = (data ?? []) as StopWithPlace[]
+    if (dayId.value !== id) return
+    stops.value = (data ?? []) as StopWithPlace[]
+    fillMissingHours()
+  }
+
+  /** Looks up opening hours for places saved before hours were recorded, and stores them for everyone. */
+  function fillMissingHours() {
+    const missing = new Set(stops.value.filter((s) => s.place.opening_hours === null).map((s) => s.place_id))
+    for (const placeId of missing) {
+      if (hoursAttempted.has(placeId)) continue
+      hoursAttempted.add(placeId)
+      fetchOpeningHours(placeId)
+        .then(async (periods) => {
+          await supabase.from('places').update({ opening_hours: periods as unknown as Json }).eq('place_id', placeId)
+          stops.value = stops.value.map((s) =>
+            s.place_id === placeId ? { ...s, place: { ...s.place, opening_hours: periods } } : s,
+          )
+        })
+        // Hours are a refinement; without them the place is simply treated as always open.
+        .catch(() => {})
+    }
+  }
+
+  /** Deletes the open day with its stops, then opens a neighbouring day (or a fresh one for today). */
+  async function deleteDay() {
+    const current = day.value
+    if (!current) return
+    const index = dayIndex.value
+    const { error: e } = await supabase.from('days').delete().eq('id', current.id)
+    if (fail(e?.message)) return
+    days.value = days.value.filter((d) => d.id !== current.id)
+    const next = days.value[index] ?? days.value[index - 1]
+    if (next) await selectDay(next.id)
+    else await goToDate(todayIso())
   }
 
   /** Opens the day for a date, adding it to the trip if it does not exist yet. */
@@ -168,7 +204,7 @@ export const useTripStore = defineStore('trip', () => {
       if (fail(saved.error?.message)) return
     }
     // A stored place may carry guide notes the freshly searched one lacks; keep whichever is fuller.
-    const full = place && ({ guide: null, suggested_minutes: null, created_at: '', ...place } as Place)
+    const full = place && ({ guide: null, suggested_minutes: null, created_at: '', ...place, opening_hours: null } as Place)
     const id = place?.place_id ?? null
     if (kind === 'start') await patchDay({ start_place: full, start_place_id: id }, { start_place_id: id })
     else await patchDay({ end_place: full, end_place_id: id }, { end_place_id: id })
@@ -200,7 +236,8 @@ export const useTripStore = defineStore('trip', () => {
   async function addPlace(place: ResolvedPlace) {
     if (!dayId.value) return
     // Places are shared between users; an existing row is left as it is.
-    const saved = await supabase.from('places').upsert(place, { onConflict: 'place_id', ignoreDuplicates: true })
+    const row = { ...place, opening_hours: place.opening_hours as unknown as Json }
+    const saved = await supabase.from('places').upsert(row, { onConflict: 'place_id', ignoreDuplicates: true })
     if (fail(saved.error?.message)) return
 
     const position = Math.max(-1, ...stops.value.map((s) => s.position)) + 1
@@ -211,6 +248,8 @@ export const useTripStore = defineStore('trip', () => {
       .single()
     if (fail(e?.message) || !data) return
     stops.value = [...stops.value, data as StopWithPlace]
+    // The place may already exist from before hours were recorded, in which case its row was kept.
+    fillMissingHours()
     applySuggestedDuration(data.id, place.place_id)
     return data.id
   }
@@ -287,6 +326,6 @@ export const useTripStore = defineStore('trip', () => {
 
   return {
     trips, trip, days, day, dayIndex, stops, loading, error, infoErrors,
-    load, openTrip, createTrip, renameTrip, deleteTrip, selectDay, moveDay, goToDate, setStartTime, setStartTravelMode, setEndpoint, stepDay, addPlace, loadPlaceInfo, updateStop, removeStop, reorder,
+    load, openTrip, createTrip, renameTrip, deleteTrip, selectDay, moveDay, deleteDay, goToDate, setStartTime, setStartTravelMode, setEndpoint, stepDay, addPlace, loadPlaceInfo, updateStop, removeStop, reorder,
   }
 })

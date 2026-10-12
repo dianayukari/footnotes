@@ -99,6 +99,7 @@ export type Database = {
           lat: number
           lng: number
           name: string
+          opening_hours: Json | null
           place_id: string
           suggested_minutes: number | null
           types: string[]
@@ -111,6 +112,7 @@ export type Database = {
           lat: number
           lng: number
           name: string
+          opening_hours?: Json | null
           place_id: string
           suggested_minutes?: number | null
           types?: string[]
@@ -123,6 +125,7 @@ export type Database = {
           lat?: number
           lng?: number
           name?: string
+          opening_hours?: Json | null
           place_id?: string
           suggested_minutes?: number | null
           types?: string[]

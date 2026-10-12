@@ -18,6 +18,10 @@ export interface ItineraryStop {
   waitMinutes?: number
   /** Minutes past the fixed arrival time, when it cannot be met. */
   lateMinutes?: number
+  /** The scheduled visit falls outside the place's opening hours. */
+  closed?: boolean
+  /** The place's hours on this day, e.g. "Open 9:00 AM – 5:00 PM". Absent when unrestricted. */
+  hoursToday?: string
 }
 
 /** Travel from the stop at the same index to the next one. */

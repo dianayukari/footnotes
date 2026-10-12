@@ -132,6 +132,61 @@ describe('optimise', () => {
     expect([...order].sort((a, b) => a - b)).toEqual(positions.map((_, i) => i))
   })
 
+  it('waits for a place to open', () => {
+    const stops: SolverStop[] = [{ id: 'a', duration: 30, windows: [[600, 900]] }]
+    expect(schedule([0], stops, [[0]], 540)[0]).toMatchObject({ arrive: 540, begin: 600, depart: 630, closed: false })
+  })
+
+  it('flags a visit that cannot fit before closing', () => {
+    const stops: SolverStop[] = [{ id: 'a', duration: 90, windows: [[540, 600]] }]
+    expect(schedule([0], stops, [[0]], 540)[0]).toMatchObject({ closed: true })
+  })
+
+  it('orders stops around opening hours', () => {
+    // Stop 0 is nearest but only opens late; stop 2 closes early.
+    const travel = line([0, 10, 20])
+    const stops: SolverStop[] = [
+      { id: 's0', duration: 30, windows: [[700, 900]] },
+      { id: 's1', duration: 30 },
+      { id: 's2', duration: 30, windows: [[540, 600]] },
+    ]
+    const { order, unmet } = optimise(stops, travel, 540)
+    expect(unmet).toEqual([])
+    expect(schedule(order, stops, travel, 540).every((v) => !v.closed)).toBe(true)
+    expect(order[0]).toBe(2)
+  })
+
+  it('names a stop that is closed all day and still returns every stop', () => {
+    const stops: SolverStop[] = [
+      { id: 's0', duration: 30 },
+      { id: 's1', duration: 30, windows: [] },
+    ]
+    const { order, unmet } = optimise(stops, line([0, 10]), 540)
+    expect(unmet).toEqual(['s1'])
+    expect([...order].sort()).toEqual([0, 1])
+  })
+
+  it('matches brute force on random days with opening hours', () => {
+    let seed = 23
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    for (let round = 0; round < 40; round++) {
+      const n = 6
+      const travel = Array.from({ length: n }, (_, i) =>
+        Array.from({ length: n }, (_, j) => (i === j ? 0 : 5 + Math.floor(random() * 40))),
+      )
+      const stops: SolverStop[] = Array.from({ length: n }, (_, i) => {
+        const open = 540 + Math.floor(random() * 240)
+        return { id: `s${i}`, duration: 30, windows: random() < 0.5 ? [[open, open + 120 + Math.floor(random() * 300)]] : undefined }
+      })
+      const ok = (p: number[]) => schedule(p, stops, travel, 540).every((v) => !v.closed)
+      const feasible = permutations([0, 1, 2, 3, 4, 5]).filter(ok)
+      const result = optimise(stops, travel, 540)
+      const expected = feasible.length ? Math.min(...feasible.map((p) => totalTravel(p, travel))) : null
+      const actual = result.unmet.length ? null : totalTravel(result.order, travel)
+      expect(actual).toBe(expected)
+    }
+  })
+
   it('handles an empty day', () => {
     expect(optimise([], [], 540)).toEqual({ order: [], exact: true, unmet: [] })
   })

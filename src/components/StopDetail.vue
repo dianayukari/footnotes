@@ -3,7 +3,11 @@ import { ChevronLeft, Trash2 } from 'lucide-vue-next'
 import { formatDuration } from '@/lib/format'
 import type { StopPatch, StopWithPlace } from '@/stores/trip'
 
-const props = defineProps<{ stop: StopWithPlace }>()
+const props = defineProps<{
+  stop: StopWithPlace
+  /** The place's opening hours on the day being planned, already worded for display. */
+  hoursToday?: string
+}>()
 const emit = defineEmits<{ back: []; update: [patch: StopPatch]; remove: [] }>()
 
 function onDuration(e: Event) {
@@ -26,6 +30,7 @@ function onNotes(e: Event) {
     <button class="back" @click="emit('back')"><ChevronLeft :size="18" /> Day</button>
     <h2>{{ stop.place.name }}</h2>
     <p v-if="stop.place.address" class="address">{{ stop.place.address }}</p>
+    <p v-if="hoursToday" class="hours">{{ hoursToday }}</p>
 
     <label>
       <span>Visit duration (minutes)</span>
@@ -79,8 +84,9 @@ h2 {
   font-weight: 600;
 }
 
-.address {
-  margin: 0 0 8px;
+.address,
+.hours {
+  margin: 0 0 4px;
   font-size: 14px;
   color: var(--text-muted);
 }

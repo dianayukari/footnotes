@@ -61,7 +61,7 @@ function timeText(stop: ItineraryStop) {
     <ol ref="list">
       <li v-for="(stop, i) in day.stops" :key="stop.id">
         <div v-if="stop.waitMinutes" class="wait">Free time · {{ formatDuration(stop.waitMinutes) }}</div>
-        <div class="row" :class="{ selected: stop.id === selectedId, late: stop.lateMinutes }">
+        <div class="row" :class="{ selected: stop.id === selectedId, late: stop.lateMinutes || stop.closed }">
           <button class="stop" @click="emit('select', stop.id)">
             <span class="dot" :style="{ background: categories[stop.category].color }">
               <component :is="categories[stop.category].icon" :size="13" :stroke-width="2.6" />
@@ -74,6 +74,7 @@ function timeText(stop: ItineraryStop) {
             <span v-if="stop.lateMinutes && stop.fixedArrival" class="meta problem">
               {{ formatDuration(stop.lateMinutes) }} after the fixed {{ formatTime(stop.fixedArrival) }} arrival
             </span>
+            <span v-if="stop.closed" class="meta problem">Closed at this time. {{ stop.hoursToday }}</span>
           </button>
           <span class="grip" aria-label="Drag to reorder"><GripVertical :size="18" /></span>
         </div>

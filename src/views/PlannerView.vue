@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { CalendarClock, EllipsisVertical, LocateFixed, Scan, WandSparkles } from 'lucide-vue-next'
+import { CalendarClock, EllipsisVertical, LocateFixed, Scan, Trash2, WandSparkles } from 'lucide-vue-next'
 import BottomSheet from '@/components/BottomSheet.vue'
 import DayHeader from '@/components/DayHeader.vue'
 import DayTimeline from '@/components/DayTimeline.vue'
@@ -34,12 +34,23 @@ const { isDesktop, height: viewportHeight } = useViewport()
 
 const day = computed(() => route.itinerary)
 
-// Fixed arrival times the current order cannot meet, spelled out above the timeline.
-const problems = computed(() =>
-  day.value.stops
+// Fixed arrival times and opening hours the current order cannot meet, spelled out above the timeline.
+const problems = computed(() => [
+  ...day.value.stops
     .filter((s) => s.lateMinutes && s.fixedArrival && s.arrive)
     .map((s) => `${s.name} can't be reached by ${formatTime(s.fixedArrival!)}. Earliest arrival is ${formatTime(s.arrive!)}.`),
-)
+  ...day.value.stops
+    .filter((s) => s.closed && s.arrive)
+    .map((s) => `${s.name} is closed for a visit at ${formatTime(s.arrive!)}. ${s.hoursToday ?? ''}`.trim()),
+])
+
+function deleteDay() {
+  const current = trip.day
+  if (!current) return
+  const count = trip.stops.length
+  const what = count ? `${formatDate(current.date)} and its ${count} stop${count === 1 ? '' : 's'}` : formatDate(current.date)
+  if (window.confirm(`Delete ${what}? This cannot be undone.`)) trip.deleteDay()
+}
 
 function onStartTime(e: Event) {
   const value = (e.target as HTMLInputElement).value
@@ -152,6 +163,7 @@ onMounted(trip.load)
           v-else-if="selectedStop"
           :key="selectedStop.id"
           :stop="selectedStop"
+          :hours-today="day.stops.find((s) => s.id === selectedStop!.id)?.hoursToday"
           @back="selectedId = undefined"
           @update="trip.updateStop(selectedStop.id, $event)"
           @remove="removeSelected"
@@ -180,9 +192,12 @@ onMounted(trip.load)
             @return-to-start="returnToStart"
           />
           <template v-if="trip.day">
-            <button v-if="moveTo === undefined" class="move" @click="moveTo = trip.day.date">
-              <CalendarClock :size="16" /> Move this day to another date
-            </button>
+            <div v-if="moveTo === undefined" class="day-actions">
+              <button class="move" @click="moveTo = trip.day.date">
+                <CalendarClock :size="16" /> Move this day to another date
+              </button>
+              <button class="move danger" @click="deleteDay"><Trash2 :size="16" /> Delete this day</button>
+            </div>
             <form v-else class="move-form" @submit.prevent="moveDay">
               <label>
                 Move this day's plans to
@@ -294,14 +309,24 @@ onMounted(trip.load)
   background: var(--accent);
 }
 
+.day-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  margin-top: 14px;
+}
+
 .move {
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  margin-top: 14px;
   padding: 8px 0;
   font-size: 15px;
   color: var(--accent);
+}
+
+.move.danger {
+  color: var(--danger);
 }
 
 .move-form {

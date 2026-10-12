@@ -1,5 +1,6 @@
 import { importLibrary } from '@googlemaps/js-api-loader'
 import { configureGoogle } from './google'
+import type { OpeningPeriod } from './hours'
 import type { Category } from '@/types/itinerary'
 
 export interface PlaceSuggestion {
@@ -17,6 +18,7 @@ export interface ResolvedPlace {
   address: string | null
   types: string[]
   utc_offset_minutes: number | null
+  opening_hours: OpeningPeriod[]
 }
 
 // One token spans a search session (keystrokes plus the final details fetch), which Google bills
@@ -42,9 +44,23 @@ export async function searchPlaces(
   })
 }
 
+function periodsOf(hours: google.maps.places.OpeningHours | null | undefined): OpeningPeriod[] {
+  const point = (p: google.maps.places.OpeningHoursPoint) => ({ day: p.day, hour: p.hour, minute: p.minute })
+  return (hours?.periods ?? []).map((p) => ({ open: point(p.open), close: p.close ? point(p.close) : null }))
+}
+
+/** Opening hours for a place saved before hours were recorded. Empty when Google lists none. */
+export async function fetchOpeningHours(placeId: string): Promise<OpeningPeriod[]> {
+  configureGoogle()
+  const { Place } = await importLibrary('places')
+  const place = new Place({ id: placeId })
+  await place.fetchFields({ fields: ['regularOpeningHours'] })
+  return periodsOf(place.regularOpeningHours)
+}
+
 export async function resolvePlace(suggestion: PlaceSuggestion): Promise<ResolvedPlace> {
   const place = suggestion.prediction.toPlace()
-  await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location', 'types', 'utcOffsetMinutes'] })
+  await place.fetchFields({ fields: ['displayName', 'formattedAddress', 'location', 'types', 'utcOffsetMinutes', 'regularOpeningHours'] })
   sessionToken = undefined
   if (!place.location) throw new Error(`Google returned no location for ${suggestion.title}`)
   return {
@@ -55,6 +71,7 @@ export async function resolvePlace(suggestion: PlaceSuggestion): Promise<Resolve
     address: place.formattedAddress ?? null,
     types: place.types ?? [],
     utc_offset_minutes: place.utcOffsetMinutes ?? null,
+    opening_hours: periodsOf(place.regularOpeningHours),
   }
 }
 

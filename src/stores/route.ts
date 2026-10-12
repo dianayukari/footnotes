@@ -1,6 +1,7 @@
 import { computed, ref, watch } from 'vue'
 import { defineStore } from 'pinia'
 import { minutesToTime, timeToMinutes } from '@/lib/format'
+import { describeWindows, weekdayOf, windowsFor } from '@/lib/hours'
 import { categoryFromTypes } from '@/lib/places'
 import { departureInstant, estimateWalk, fetchLegRoute, fetchMatrix, type LegRoute, type Travel } from '@/lib/routing'
 import { optimise as solve, schedule, type Ends, type SolverStop, type Visit } from '@/lib/solver'
@@ -114,11 +115,18 @@ export const useRouteStore = defineStore('route', () => {
     return { mode: 'transit', ...transit }
   }
 
+  /** When a place is open on the day being planned. */
+  function windowsOf(place: Place) {
+    if (!trip.day) return undefined
+    return windowsFor(place.opening_hours, weekdayOf(trip.day.date))
+  }
+
   function solverStops(): SolverStop[] {
     return trip.stops.map((s) => ({
       id: s.id,
       duration: s.duration_minutes,
       fixedArrival: s.fixed_arrival ? timeToMinutes(s.fixed_arrival) : undefined,
+      windows: windowsOf(s.place),
     }))
   }
 
@@ -294,6 +302,8 @@ export const useRouteStore = defineStore('route', () => {
           // Without a start point, waiting before the first stop just means the day starts later.
           waitMinutes: visit && (i > 0 || hasStart) ? visit.begin - visit.arrive : 0,
           lateMinutes: visit?.late ?? 0,
+          closed: visit?.closed ?? false,
+          hoursToday: describeWindows(windowsOf(s.place)),
         }
       }),
       legs: between,
@@ -313,7 +323,10 @@ export const useRouteStore = defineStore('route', () => {
         trip.day?.start_place_id,
         trip.day?.end_place_id,
         trip.day?.start_travel_mode,
-        ...trip.stops.map((s) => `${s.id}:${s.place_id}:${s.duration_minutes}:${s.fixed_arrival}:${s.travel_mode}`),
+        ...trip.stops.map(
+          (s) =>
+            `${s.id}:${s.place_id}:${s.duration_minutes}:${s.fixed_arrival}:${s.travel_mode}:${s.place.opening_hours !== null}`,
+        ),
       ].join('|'),
     () => {
       notice.value = ''

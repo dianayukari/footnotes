@@ -147,3 +147,14 @@ vite.config.ts.timestamp-*
 
 # Turbo Repo
 .turbo
+
+# Tooling
+*.tsbuildinfo
+.eslintcache
+.DS_Store
+*.local
+__screenshots__/
+*.timestamp-*-*.mjs
+
+# Browser test output
+.playwright-mcp/

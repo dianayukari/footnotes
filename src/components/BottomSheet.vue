@@ -47,6 +47,12 @@ function onPointerUp() {
   height.value = nearestSnap(height.value)
 }
 
+function expand() {
+  height.value = snaps.value[2]!
+}
+
+defineExpose({ expand })
+
 watch(viewportHeight, () => (height.value = nearestSnap(height.value)))
 watch([height, dragging, isDesktop], () => {
   if (!dragging.value) emit('height', isDesktop.value ? 0 : height.value)

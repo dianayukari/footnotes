@@ -20,6 +20,7 @@
     "@supabase/supabase-js": "^2.117.3",
     "lucide-vue-next": "^1.0.0",
     "pinia": "^4.0.3",
+    "sortablejs": "^1.15.7",
     "vue": "^3.5.42",
     "vue-router": "^5.3.1"
   },
@@ -28,6 +29,7 @@
     "@types/google.maps": "^3.66.6",
     "@types/jsdom": "^30.0.0",
     "@types/node": "^24.13.4",
+    "@types/sortablejs": "^1.15.9",
     "@vitejs/plugin-vue": "^6.0.8",
     "@vitest/eslint-plugin": "^1.6.27",
     "@vue/eslint-config-typescript": "^14.9.0",

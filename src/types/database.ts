@@ -99,6 +99,7 @@ export type Database = {
           place_id: string
           suggested_minutes: number | null
           types: string[]
+          utc_offset_minutes: number | null
         }
         Insert: {
           address?: string | null
@@ -110,6 +111,7 @@ export type Database = {
           place_id: string
           suggested_minutes?: number | null
           types?: string[]
+          utc_offset_minutes?: number | null
         }
         Update: {
           address?: string | null
@@ -121,6 +123,7 @@ export type Database = {
           place_id?: string
           suggested_minutes?: number | null
           types?: string[]
+          utc_offset_minutes?: number | null
         }
         Relationships: []
       }

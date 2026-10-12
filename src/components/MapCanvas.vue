@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { h, onBeforeUnmount, onMounted, ref, render, shallowRef, watch } from 'vue'
-import { importLibrary, setOptions } from '@googlemaps/js-api-loader'
+import { importLibrary } from '@googlemaps/js-api-loader'
 import ModeBadge from './ModeBadge.vue'
 import StopMarker from './StopMarker.vue'
+import { configureGoogle, googleMapsKey as apiKey } from '@/lib/google'
 import type { ItineraryDay } from '@/types/itinerary'
 
 export interface MapPadding {
@@ -16,7 +17,6 @@ const props = defineProps<{ day: ItineraryDay; padding: MapPadding }>()
 const emit = defineEmits<{ selectStop: [id: string] }>()
 
 const ROUTE_COLOR = '#1a73ff'
-const apiKey = import.meta.env.VITE_GOOGLE_MAPS_KEY
 
 const el = ref<HTMLDivElement>()
 const error = ref(apiKey ? '' : 'Google Maps key is missing. Set VITE_GOOGLE_MAPS_KEY in .env.local.')
@@ -46,7 +46,10 @@ function draw() {
   if (!m) return
   clear()
 
-  const path = props.day.stops.map((s) => ({ lat: s.lat, lng: s.lng }))
+  const { stops, legs } = props.day
+  // Each leg follows its real path once that is known, and a straight line until then.
+  const legPaths = stops.slice(0, -1).map((a, i) => legs[i]?.path ?? [a, stops[i + 1]!].map(({ lat, lng }) => ({ lat, lng })))
+  const path = legPaths.flat()
   // White casing under the route so it reads on any map colour.
   lines.push(
     new google.maps.Polyline({ map: m, path, strokeColor: '#fff', strokeWeight: 9, strokeOpacity: 0.9, zIndex: 1 }),
@@ -54,14 +57,16 @@ function draw() {
   )
 
   props.day.legs.forEach((leg, i) => {
-    const a = props.day.stops[i]
-    const b = props.day.stops[i + 1]
+    const legPath = legPaths[i]
     // Legs this short have no room for a badge between the two pins.
-    if (!a || !b || leg.km < 0.3) return
+    if (!legPath || leg.km < 0.3) return
+    const first = legPath[0]!
+    const last = legPath.at(-1)!
+    const middle = legPath.length > 2 ? legPath[Math.floor(legPath.length / 2)]! : { lat: (first.lat + last.lat) / 2, lng: (first.lng + last.lng) / 2 }
     markers.push(
       new google.maps.marker.AdvancedMarkerElement({
         map: m,
-        position: { lat: (a.lat + b.lat) / 2, lng: (a.lng + b.lng) / 2 },
+        position: middle,
         content: mount(ModeBadge, { mode: leg.mode }),
         zIndex: 1,
       }),
@@ -87,10 +92,20 @@ function fitRoute() {
   const bounds = new google.maps.LatLngBounds()
   for (const s of props.day.stops) bounds.extend({ lat: s.lat, lng: s.lng })
   m.fitBounds(bounds, props.padding)
+  // A single stop would otherwise zoom to street level.
+  if (props.day.stops.length === 1) m.setZoom(15)
 }
 
 function panTo(position: google.maps.LatLngLiteral) {
   map.value?.panTo(position)
+}
+
+/** Centre of the current view, or undefined when zoomed too far out to be a useful search bias. */
+function searchBias(): google.maps.LatLngLiteral | undefined {
+  const m = map.value
+  const center = m?.getCenter()
+  if (!m || !center || (m.getZoom() ?? 0) < 8) return undefined
+  return center.toJSON()
 }
 
 function locate() {
@@ -100,16 +115,16 @@ function locate() {
   })
 }
 
-defineExpose({ fitRoute, panTo, locate })
+defineExpose({ fitRoute, panTo, locate, searchBias })
 
 onMounted(async () => {
   if (!apiKey || !el.value) return
   try {
-    setOptions({ key: apiKey, v: 'weekly' })
+    configureGoogle()
     const [{ Map }] = await Promise.all([importLibrary('maps'), importLibrary('marker')])
     map.value = new Map(el.value, {
-      center: { lat: 41.8986, lng: 12.4769 },
-      zoom: 13,
+      center: { lat: 30, lng: 10 },
+      zoom: 2,
       mapId: import.meta.env.VITE_GOOGLE_MAP_ID || 'DEMO_MAP_ID',
       disableDefaultUI: true,
       gestureHandling: 'greedy',
@@ -122,10 +137,9 @@ onMounted(async () => {
   }
 })
 
-watch(() => props.day, () => {
-  draw()
-  fitRoute()
-})
+watch(() => props.day, draw)
+// Refit only when the set or order of stops changes, not on every edit.
+watch(() => props.day.stops.map((s) => s.id).join(), fitRoute)
 
 onBeforeUnmount(clear)
 </script>

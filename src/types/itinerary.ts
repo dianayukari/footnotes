@@ -8,11 +8,16 @@ export interface ItineraryStop {
   category: Category
   lat: number
   lng: number
-  arrive: string
-  depart: string
   durationMinutes: number
-  /** Arrival time was set by the user and must not move. */
-  fixed: boolean
+  /** Arrival time set by the user ("HH:MM:SS"); the optimiser must not move it. */
+  fixedArrival: string | null
+  /** Scheduled times ("HH:MM:SS"), known once travel times have been computed. */
+  arrive?: string
+  depart?: string
+  /** Minutes of slack between arriving and a later fixed arrival time. */
+  waitMinutes?: number
+  /** Minutes past the fixed arrival time, when it cannot be met. */
+  lateMinutes?: number
 }
 
 /** Travel from the stop at the same index to the next one. */
@@ -21,6 +26,8 @@ export interface ItineraryLeg {
   minutes: number
   km: number
   summary: string
+  /** The real path, once fetched. The map draws a straight line until then. */
+  path?: { lat: number; lng: number }[]
 }
 
 export interface ItineraryDay {

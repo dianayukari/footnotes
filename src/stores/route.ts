@@ -308,6 +308,7 @@ export const useRouteStore = defineStore('route', () => {
     () =>
       [
         trip.day?.id,
+        trip.day?.date,
         trip.day?.start_time,
         trip.day?.start_place_id,
         trip.day?.end_place_id,

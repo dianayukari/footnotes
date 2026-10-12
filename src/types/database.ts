@@ -242,7 +242,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      move_day: {
+        Args: { p_date: string; p_day: string; p_swap?: boolean }
+        Returns: string
+      }
     }
     Enums: {
       [_ in never]: never

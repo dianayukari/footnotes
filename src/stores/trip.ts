@@ -16,6 +16,7 @@ export type StopPatch = Partial<Pick<Stop, 'duration_minutes' | 'fixed_arrival' 
 }
 
 export const useTripStore = defineStore('trip', () => {
+  const trips = ref<Trip[]>([])
   const trip = ref<Trip | null>(null)
   const days = ref<DayWithPlaces[]>([])
   const dayId = ref<string>()
@@ -37,27 +38,84 @@ export const useTripStore = defineStore('trip', () => {
     return Boolean(message)
   }
 
-  /** Loads the most recent trip, creating a first trip with one day for new users. */
+  // Remembers which trip was open on this device; purely a convenience, so failures are ignored.
+  const LAST_TRIP_KEY = 'footnotes:last-trip'
+  function rememberTrip(id: string) {
+    try {
+      localStorage.setItem(LAST_TRIP_KEY, id)
+    } catch {
+      // Storage can be unavailable (private windows, blocked site data).
+    }
+  }
+  function rememberedTrip() {
+    try {
+      return localStorage.getItem(LAST_TRIP_KEY)
+    } catch {
+      return null
+    }
+  }
+
+  /** Loads the traveller's trips and opens the last one used, creating a first trip for new users. */
   async function load() {
     loading.value = true
     error.value = ''
-    const found = await supabase.from('trips').select('*').order('created_at', { ascending: false }).limit(1)
+    const found = await supabase.from('trips').select('*').order('created_at', { ascending: false })
     if (fail(found.error?.message)) return (loading.value = false)
+    trips.value = found.data ?? []
 
-    trip.value = found.data?.[0] ?? null
-    if (!trip.value) {
-      const created = await supabase.from('trips').insert({ name: 'My first trip' }).select().single()
-      if (fail(created.error?.message)) return (loading.value = false)
-      trip.value = created.data
-    }
+    if (trips.value.length === 0) return createTrip('My first trip')
+    const last = rememberedTrip()
+    await openTrip((trips.value.find((t) => t.id === last) ?? trips.value[0]!).id)
+  }
 
-    const loaded = await supabase.from('days').select(DAY_COLUMNS).eq('trip_id', trip.value!.id).order('date')
+  /** Switches to a trip and opens its next upcoming day, adding today if it has no days yet. */
+  async function openTrip(id: string) {
+    const next = trips.value.find((t) => t.id === id)
+    if (!next) return
+    loading.value = true
+    trip.value = next
+    rememberTrip(id)
+    days.value = []
+    dayId.value = undefined
+    stops.value = []
+
+    const loaded = await supabase.from('days').select(DAY_COLUMNS).eq('trip_id', id).order('date')
     if (fail(loaded.error?.message)) return (loading.value = false)
+    // A newer switch may have replaced this one while the request was in flight.
+    if (trip.value?.id !== id) return
     days.value = (loaded.data ?? []) as DayWithPlaces[]
 
     if (days.value.length === 0) await goToDate(todayIso())
     else await selectDay((days.value.find((d) => d.date >= todayIso()) ?? days.value.at(-1)!).id)
     loading.value = false
+  }
+
+  async function createTrip(name: string) {
+    const created = await supabase.from('trips').insert({ name }).select().single()
+    if (fail(created.error?.message) || !created.data) return (loading.value = false)
+    trips.value = [created.data, ...trips.value]
+    await openTrip(created.data.id)
+  }
+
+  async function renameTrip(id: string, name: string) {
+    const before = trips.value
+    trips.value = before.map((t) => (t.id === id ? { ...t, name } : t))
+    if (trip.value?.id === id) trip.value = { ...trip.value, name }
+    const { error: e } = await supabase.from('trips').update({ name }).eq('id', id)
+    if (fail(e?.message)) {
+      trips.value = before
+      if (trip.value?.id === id) trip.value = before.find((t) => t.id === id) ?? trip.value
+    }
+  }
+
+  /** Deletes a trip with all its days and stops. Opens another trip, or a fresh one, if it was open. */
+  async function deleteTrip(id: string) {
+    const { error: e } = await supabase.from('trips').delete().eq('id', id)
+    if (fail(e?.message)) return
+    trips.value = trips.value.filter((t) => t.id !== id)
+    if (trip.value?.id !== id) return
+    if (trips.value.length > 0) await openTrip(trips.value[0]!.id)
+    else await createTrip('My first trip')
   }
 
   async function selectDay(id: string) {
@@ -114,6 +172,24 @@ export const useTripStore = defineStore('trip', () => {
     const id = place?.place_id ?? null
     if (kind === 'start') await patchDay({ start_place: full, start_place_id: id }, { start_place_id: id })
     else await patchDay({ end_place: full, end_place_id: id }, { end_place_id: id })
+  }
+
+  /**
+   * Moves the open day's plans to another date. When that date already has plans nothing changes
+   * and 'occupied' is returned, unless swap is set, in which case the two days trade dates.
+   */
+  async function moveDay(date: string, swap = false) {
+    const current = day.value
+    if (!current || !trip.value) return
+    const { data: outcome, error: e } = await supabase.rpc('move_day', { p_day: current.id, p_date: date, p_swap: swap })
+    if (fail(e?.message)) return
+    if (outcome === 'occupied') return 'occupied' as const
+
+    // Dates changed, and an empty day on the target date may be gone, so reload the list.
+    const loaded = await supabase.from('days').select(DAY_COLUMNS).eq('trip_id', trip.value.id).order('date')
+    if (fail(loaded.error?.message)) return
+    days.value = (loaded.data ?? []) as DayWithPlaces[]
+    return outcome === 'swapped' ? ('swapped' as const) : ('moved' as const)
   }
 
   function stepDay(offset: -1 | 1) {
@@ -210,7 +286,7 @@ export const useTripStore = defineStore('trip', () => {
   }
 
   return {
-    trip, days, day, dayIndex, stops, loading, error, infoErrors,
-    load, selectDay, goToDate, setStartTime, setStartTravelMode, setEndpoint, stepDay, addPlace, loadPlaceInfo, updateStop, removeStop, reorder,
+    trips, trip, days, day, dayIndex, stops, loading, error, infoErrors,
+    load, openTrip, createTrip, renameTrip, deleteTrip, selectDay, moveDay, goToDate, setStartTime, setStartTravelMode, setEndpoint, stepDay, addPlace, loadPlaceInfo, updateStop, removeStop, reorder,
   }
 })

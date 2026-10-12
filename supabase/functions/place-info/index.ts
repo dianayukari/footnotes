@@ -41,13 +41,26 @@ Deno.serve(async (req) => {
   const { data: auth } = token ? await admin.auth.getUser(token) : { data: { user: null } }
   if (!auth.user) return json({ error: 'Not signed in' }, 401)
 
-  const { data: profile } = await admin.from('profiles').select('approved').eq('id', auth.user.id).maybeSingle()
+  const { data: profile, error: profileError } = await admin
+    .from('profiles')
+    .select('approved')
+    .eq('id', auth.user.id)
+    .maybeSingle()
+  // A failed lookup is a server fault, not a verdict on the account.
+  if (profileError) {
+    console.error('Could not read profile', profileError.message)
+    return json({ error: 'Could not check the account' }, 500)
+  }
   if (!profile?.approved) return json({ error: 'Account not approved' }, 403)
 
   const { place_id } = await req.json().catch(() => ({}))
   if (typeof place_id !== 'string') return json({ error: 'place_id is required' }, 400)
 
-  const { data: place } = await admin.from('places').select('*').eq('place_id', place_id).maybeSingle()
+  const { data: place, error: placeError } = await admin.from('places').select('*').eq('place_id', place_id).maybeSingle()
+  if (placeError) {
+    console.error('Could not read place', placeError.message)
+    return json({ error: 'Could not read the place' }, 500)
+  }
   if (!place) return json({ error: 'Unknown place' }, 404)
   if (place.guide && place.suggested_minutes) {
     return json({ guide: place.guide, suggested_minutes: place.suggested_minutes })

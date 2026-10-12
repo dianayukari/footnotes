@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { EllipsisVertical, LocateFixed, Scan, WandSparkles } from 'lucide-vue-next'
+import { CalendarClock, EllipsisVertical, LocateFixed, Scan, WandSparkles } from 'lucide-vue-next'
 import BottomSheet from '@/components/BottomSheet.vue'
 import DayHeader from '@/components/DayHeader.vue'
 import DayTimeline from '@/components/DayTimeline.vue'
@@ -10,8 +10,9 @@ import MapCanvas, { type MapPadding } from '@/components/MapCanvas.vue'
 import SettingsMenu from '@/components/SettingsMenu.vue'
 import StopDetail from '@/components/StopDetail.vue'
 import TabBar from '@/components/TabBar.vue'
+import TripsList from '@/components/TripsList.vue'
 import { useViewport } from '@/lib/layout'
-import { formatTime } from '@/lib/format'
+import { formatDate, formatTime } from '@/lib/format'
 import type { ResolvedPlace } from '@/lib/places'
 import { useRouteStore } from '@/stores/route'
 import { useTripStore } from '@/stores/trip'
@@ -74,6 +75,20 @@ async function setEndpoint(place: ResolvedPlace) {
   if (kind) await trip.setEndpoint(kind, place)
 }
 
+// The date typed into the "move this day" form; undefined while the form is closed.
+const moveTo = ref<string>()
+
+async function moveDay() {
+  const date = moveTo.value
+  if (!date || date === trip.day?.date) return
+  const outcome = await trip.moveDay(date)
+  if (outcome === 'occupied') {
+    if (!window.confirm(`${formatDate(date)} already has plans. Swap the two days?`)) return
+    await trip.moveDay(date, true)
+  }
+  if (!trip.error) moveTo.value = undefined
+}
+
 function returnToStart() {
   if (trip.day?.start_place) trip.setEndpoint('end', trip.day.start_place)
 }
@@ -88,6 +103,7 @@ async function removeSelected() {
 watch(() => trip.day?.id, () => {
   selectedId.value = undefined
   picking.value = undefined
+  moveTo.value = undefined
 })
 // Switching tabs abandons the search for a start or end point.
 watch(tab, () => (picking.value = undefined))
@@ -114,6 +130,7 @@ onMounted(trip.load)
         <DayHeader
           v-else-if="tab === 'day' && trip.day"
           :date="trip.day.date"
+          :dates="trip.days.map((d) => d.date)"
           :has-previous="trip.dayIndex > 0"
           :has-next="trip.dayIndex < trip.days.length - 1"
           @previous="trip.stepDay(-1)"
@@ -162,6 +179,19 @@ onMounted(trip.load)
             @clear-endpoint="trip.setEndpoint($event, null)"
             @return-to-start="returnToStart"
           />
+          <template v-if="trip.day">
+            <button v-if="moveTo === undefined" class="move" @click="moveTo = trip.day.date">
+              <CalendarClock :size="16" /> Move this day to another date
+            </button>
+            <form v-else class="move-form" @submit.prevent="moveDay">
+              <label>
+                Move this day's plans to
+                <input v-model="moveTo" type="date" required />
+              </label>
+              <button type="submit" class="confirm" :disabled="!moveTo || moveTo === trip.day.date">Move</button>
+              <button type="button" class="dismiss" @click="moveTo = undefined">Cancel</button>
+            </form>
+          </template>
         </template>
       </template>
       <ExploreSearch
@@ -171,7 +201,7 @@ onMounted(trip.load)
         @focus="sheet?.expand()"
       />
       <GuideList v-else-if="tab === 'guide'" @select="selectStop" />
-      <p v-else class="coming">Create and switch between trips. Not built yet.</p>
+      <TripsList v-else @opened="tab = 'day'" />
     </BottomSheet>
 
     <TabBar v-model="tab" />
@@ -262,6 +292,61 @@ onMounted(trip.load)
   font-weight: 500;
   color: #fff;
   background: var(--accent);
+}
+
+.move {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 14px;
+  padding: 8px 0;
+  font-size: 15px;
+  color: var(--accent);
+}
+
+.move-form {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: flex-end;
+  margin-top: 14px;
+  padding: 12px;
+  border-radius: 16px;
+  background: rgb(255 255 255 / 60%);
+}
+
+.move-form label {
+  display: flex;
+  flex: 1 1 160px;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+  color: var(--text-muted);
+}
+
+.move-form input {
+  padding: 8px 10px;
+  border: 1px solid rgb(60 60 67 / 18%);
+  border-radius: 10px;
+  font: inherit;
+  font-size: 16px;
+  color: var(--text);
+  background: #fff;
+}
+
+.move-form button {
+  padding: 9px 14px;
+  border-radius: 10px;
+  font-weight: 500;
+}
+
+.move-form .confirm {
+  color: #fff;
+  background: var(--accent);
+}
+
+.move-form .dismiss {
+  background: var(--control);
 }
 
 .cancel {

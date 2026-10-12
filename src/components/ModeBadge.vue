@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { BusFront, Footprints } from 'lucide-vue-next'
+import { modeColors } from '@/lib/modes'
 import type { TravelMode } from '@/types/itinerary'
 
 defineProps<{ mode: TravelMode }>()
 </script>
 
 <template>
-  <div class="mode-badge">
+  <div class="mode-badge" :style="{ background: modeColors[mode] }">
     <component :is="mode === 'walk' ? Footprints : BusFront" :size="13" :stroke-width="2.6" />
   </div>
 </template>
@@ -20,7 +21,6 @@ defineProps<{ mode: TravelMode }>()
   border: 2px solid #fff;
   border-radius: 50%;
   color: #fff;
-  background: #1a73ff;
   box-shadow: 0 1px 4px rgb(0 0 0 / 30%);
   transform: translateY(50%);
 }

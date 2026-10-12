@@ -76,6 +76,38 @@ describe('optimise', () => {
     }
   })
 
+  it('starts near the start point and finishes near the end point', () => {
+    // Stops at 10, 20, 30 on a line; the day starts at 40 and ends at 0.
+    const travel = line([10, 20, 30])
+    const ends = { fromStart: [30, 20, 10], toEnd: [10, 20, 30] }
+    const { order } = optimise(stopsFor(3), travel, 540, ends)
+    expect(order).toEqual([2, 1, 0])
+    expect(totalTravel(order, travel, ends)).toBe(40)
+    expect(schedule(order, stopsFor(3), travel, 540, ends)[0]!.arrive).toBe(550)
+  })
+
+  it('matches brute force on random days with a start and an end point', () => {
+    let seed = 11
+    const random = () => (seed = (seed * 16807) % 2147483647) / 2147483647
+    const hop = () => 5 + Math.floor(random() * 40)
+    for (let round = 0; round < 40; round++) {
+      const n = 6
+      const travel = Array.from({ length: n }, (_, i) => Array.from({ length: n }, (_, j) => (i === j ? 0 : hop())))
+      const ends = { fromStart: Array.from({ length: n }, hop), toEnd: Array.from({ length: n }, hop) }
+      const fixed: Record<number, number> = {}
+      if (random() < 0.6) fixed[Math.floor(random() * n)] = 560 + Math.floor(random() * 400)
+      const stops = stopsFor(n, fixed)
+
+      const feasible = permutations([0, 1, 2, 3, 4, 5]).filter((p) =>
+        schedule(p, stops, travel, 540, ends).every((v) => v.late === 0),
+      )
+      const result = optimise(stops, travel, 540, ends)
+      const expected = feasible.length ? Math.min(...feasible.map((p) => totalTravel(p, travel, ends))) : null
+      const actual = result.unmet.length ? null : totalTravel(result.order, travel, ends)
+      expect(actual).toBe(expected)
+    }
+  })
+
   it('names the fixed stop that cannot be met', () => {
     const stops = stopsFor(3, { 1: 500 })
     const { order, unmet } = optimise(stops, line([0, 10, 20]), 540)

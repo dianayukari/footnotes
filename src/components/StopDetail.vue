@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ChevronLeft, Trash2 } from 'lucide-vue-next'
+import { formatDuration } from '@/lib/format'
 import type { StopPatch, StopWithPlace } from '@/stores/trip'
 
 const props = defineProps<{ stop: StopWithPlace }>()
@@ -29,6 +30,13 @@ function onNotes(e: Event) {
     <label>
       <span>Visit duration (minutes)</span>
       <input type="number" min="5" step="5" inputmode="numeric" :value="stop.duration_minutes" @change="onDuration" />
+      <button
+        v-if="stop.place.suggested_minutes && stop.place.suggested_minutes !== stop.duration_minutes"
+        class="suggestion"
+        @click="emit('update', { duration_minutes: stop.place.suggested_minutes })"
+      >
+        Use the suggested {{ formatDuration(stop.place.suggested_minutes) }}
+      </button>
     </label>
 
     <label>
@@ -43,6 +51,12 @@ function onNotes(e: Event) {
       <span>Notes</span>
       <textarea rows="3" :value="stop.notes ?? ''" @change="onNotes" />
     </label>
+
+    <section v-if="stop.place.guide" class="guide">
+      <h3>About this place</h3>
+      <p>{{ stop.place.guide }}</p>
+      <small>Written by AI. Check anything important.</small>
+    </section>
 
     <button class="remove" @click="emit('remove')"><Trash2 :size="16" /> Remove from day</button>
   </div>
@@ -106,6 +120,32 @@ textarea {
   padding: 0 14px;
   border-radius: 12px;
   background: var(--control);
+}
+
+.suggestion {
+  align-self: flex-start;
+  font-size: 14px;
+  color: var(--accent);
+}
+
+.guide {
+  margin-top: 22px;
+}
+
+.guide h3 {
+  margin: 0 0 6px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.guide p {
+  margin: 0 0 6px;
+  line-height: 1.5;
+}
+
+.guide small {
+  color: var(--text-muted);
 }
 
 .remove {

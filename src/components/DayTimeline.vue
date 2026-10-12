@@ -1,23 +1,26 @@
 <script setup lang="ts">
 import { onBeforeUnmount, onMounted, ref } from 'vue'
-import { BusFront, Footprints, GripVertical, Lock } from 'lucide-vue-next'
+import { GripVertical, Lock } from 'lucide-vue-next'
 import Sortable from 'sortablejs'
+import EndpointRow from './EndpointRow.vue'
+import LegRow from './LegRow.vue'
 import { categories } from '@/lib/categories'
 import { formatDuration, formatTime } from '@/lib/format'
-import type { ItineraryDay, ItineraryStop, TravelMode } from '@/types/itinerary'
+import type { EndpointKind, ItineraryDay, ItineraryStop, TravelMode } from '@/types/itinerary'
 
 const props = defineProps<{ day: ItineraryDay; selectedId?: string }>()
 const emit = defineEmits<{
   select: [id: string]
   reorder: [ids: string[]]
-  /** The traveller picked how to leave a stop for the next one. */
+  /** The traveller picked how to leave a stop for the next one, or for the end point. */
   mode: [stopId: string, mode: TravelMode]
+  /** The traveller picked how to leave the start point. */
+  startMode: [mode: TravelMode]
+  pickEndpoint: [kind: EndpointKind]
+  clearEndpoint: [kind: EndpointKind]
+  /** End the day where it started. */
+  returnToStart: []
 }>()
-
-const modes = [
-  { id: 'walk', label: 'Walk', icon: Footprints },
-  { id: 'transit', label: 'Public transit', icon: BusFront },
-] as const
 
 const list = ref<HTMLElement>()
 let sortable: Sortable | undefined
@@ -47,79 +50,75 @@ function timeText(stop: ItineraryStop) {
   parts.push(formatDuration(stop.durationMinutes))
   return parts.join(' · ')
 }
-
-function formatKm(km: number) {
-  return km < 1 ? `${Math.round(km * 1000)} m` : `${km.toFixed(1)} km`
-}
 </script>
 
 <template>
-  <p v-if="day.stops.length === 0" class="empty">No stops yet. Add places from Explore.</p>
-  <ol ref="list" class="timeline">
-    <li v-for="(stop, i) in day.stops" :key="stop.id">
-      <div v-if="stop.waitMinutes" class="wait">Free time · {{ formatDuration(stop.waitMinutes) }}</div>
-      <div class="row" :class="{ selected: stop.id === selectedId, late: stop.lateMinutes }">
-        <button class="stop" @click="emit('select', stop.id)">
-          <span class="dot" :style="{ background: categories[stop.category].color }">
-            <component :is="categories[stop.category].icon" :size="13" :stroke-width="2.6" />
-          </span>
-          <span class="name">{{ stop.name }}</span>
-          <span class="meta">
-            <Lock v-if="stop.fixedArrival" :size="12" :stroke-width="2.4" aria-label="Fixed arrival time" />
-            {{ timeText(stop) }}
-          </span>
-          <span v-if="stop.lateMinutes && stop.fixedArrival" class="meta problem">
-            {{ formatDuration(stop.lateMinutes) }} after the fixed {{ formatTime(stop.fixedArrival) }} arrival
-          </span>
-        </button>
-        <span class="grip" aria-label="Drag to reorder"><GripVertical :size="18" /></span>
-      </div>
-      <div v-if="day.legs[i]" class="leg">
-        <div class="leg-text">
-          <div class="leg-title">{{ day.legs[i]!.summary }}</div>
-          <div class="leg-meta">{{ formatDuration(day.legs[i]!.minutes) }} · {{ formatKm(day.legs[i]!.km) }}</div>
-        </div>
-        <div class="modes" role="radiogroup" :aria-label="`How to get from ${stop.name} to the next stop`">
-          <button
-            v-for="m in modes"
-            :key="m.id"
-            role="radio"
-            :aria-checked="day.legs[i]!.mode === m.id"
-            :aria-label="m.label"
-            :title="m.label"
-            :class="{ active: day.legs[i]!.mode === m.id }"
-            @click="emit('mode', stop.id, m.id)"
-          >
-            <component :is="m.icon" :size="16" />
+  <div class="timeline">
+    <EndpointRow kind="start" :place="day.start" @pick="emit('pickEndpoint', 'start')" @clear="emit('clearEndpoint', 'start')" />
+    <LegRow v-if="day.start && day.startLeg" :leg="day.startLeg" :from="day.start.name" @mode="emit('startMode', $event)" />
+
+    <p v-if="day.stops.length === 0" class="empty">No stops yet. Add places from Explore.</p>
+    <ol ref="list">
+      <li v-for="(stop, i) in day.stops" :key="stop.id">
+        <div v-if="stop.waitMinutes" class="wait">Free time · {{ formatDuration(stop.waitMinutes) }}</div>
+        <div class="row" :class="{ selected: stop.id === selectedId, late: stop.lateMinutes }">
+          <button class="stop" @click="emit('select', stop.id)">
+            <span class="dot" :style="{ background: categories[stop.category].color }">
+              <component :is="categories[stop.category].icon" :size="13" :stroke-width="2.6" />
+            </span>
+            <span class="name">{{ stop.name }}</span>
+            <span class="meta">
+              <Lock v-if="stop.fixedArrival" :size="12" :stroke-width="2.4" aria-label="Fixed arrival time" />
+              {{ timeText(stop) }}
+            </span>
+            <span v-if="stop.lateMinutes && stop.fixedArrival" class="meta problem">
+              {{ formatDuration(stop.lateMinutes) }} after the fixed {{ formatTime(stop.fixedArrival) }} arrival
+            </span>
           </button>
+          <span class="grip" aria-label="Drag to reorder"><GripVertical :size="18" /></span>
         </div>
-      </div>
-    </li>
-  </ol>
+        <LegRow v-if="day.legs[i]" :leg="day.legs[i]!" :from="stop.name" @mode="emit('mode', stop.id, $event)" />
+        <LegRow
+          v-else-if="day.endLeg && i === day.stops.length - 1"
+          :leg="day.endLeg"
+          :from="stop.name"
+          @mode="emit('mode', stop.id, $event)"
+        />
+      </li>
+    </ol>
+
+    <EndpointRow kind="end" :place="day.end" @pick="emit('pickEndpoint', 'end')" @clear="emit('clearEndpoint', 'end')">
+      <button v-if="day.start && !day.end" class="same" @click="emit('returnToStart')">Same as start</button>
+    </EndpointRow>
+  </div>
 </template>
 
 <style scoped>
 .empty {
-  margin: 4px 0;
+  margin: 4px 0 12px 40px;
   color: var(--text-muted);
 }
 
 .timeline {
   position: relative;
-  margin: 0;
-  padding: 8px 0 0;
-  list-style: none;
+  padding-top: 4px;
 }
 
-/* The vertical line behind the stop dots. */
-.timeline:not(:empty)::before {
+/* The vertical line behind the dots. */
+.timeline::before {
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: 20px;
+  bottom: 24px;
   left: 12px;
   width: 2px;
   background: rgb(60 60 67 / 45%);
   content: '';
+}
+
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 
 .row {
@@ -173,7 +172,7 @@ function formatKm(km: number) {
 }
 
 .wait {
-  padding: 0 0 10px 44px;
+  padding: 0 0 10px 48px;
   font-size: 14px;
   font-style: italic;
   color: var(--text-muted);
@@ -195,47 +194,10 @@ function formatKm(km: number) {
   touch-action: none;
 }
 
-.leg {
-  display: flex;
-  gap: 12px;
-  align-items: center;
-  padding: 0 0 10px 48px;
-  color: var(--text-muted);
-}
-
-.leg-text {
-  flex: 1;
-  min-width: 0;
-}
-
-.modes {
-  display: flex;
+.same {
   flex: none;
-  padding: 3px;
-  border-radius: 12px;
-  background: var(--control);
-}
-
-.modes button {
-  display: grid;
-  place-items: center;
-  width: 36px;
-  height: 30px;
-  border-radius: 9px;
-  color: var(--text-muted);
-}
-
-.modes button.active {
-  color: #fff;
-  background: var(--accent);
-}
-
-.leg-title {
-  font-size: 15px;
-  color: var(--text);
-}
-
-.leg-meta {
+  padding: 8px;
   font-size: 14px;
+  color: var(--accent);
 }
 </style>

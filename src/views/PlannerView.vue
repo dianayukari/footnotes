@@ -5,6 +5,7 @@ import BottomSheet from '@/components/BottomSheet.vue'
 import DayHeader from '@/components/DayHeader.vue'
 import DayTimeline from '@/components/DayTimeline.vue'
 import ExploreSearch from '@/components/ExploreSearch.vue'
+import GuideList from '@/components/GuideList.vue'
 import MapCanvas, { type MapPadding } from '@/components/MapCanvas.vue'
 import SettingsMenu from '@/components/SettingsMenu.vue'
 import StopDetail from '@/components/StopDetail.vue'
@@ -14,7 +15,7 @@ import { formatTime } from '@/lib/format'
 import type { ResolvedPlace } from '@/lib/places'
 import { useRouteStore } from '@/stores/route'
 import { useTripStore } from '@/stores/trip'
-import type { TabId } from '@/types/itinerary'
+import type { EndpointKind, TabId } from '@/types/itinerary'
 
 const PANEL_WIDTH = 400
 
@@ -22,6 +23,8 @@ const trip = useTripStore()
 const route = useRouteStore()
 const tab = ref<TabId>('day')
 const selectedId = ref<string>()
+// Set while the traveller is searching for the day's start or end point.
+const picking = ref<EndpointKind>()
 const sheetHeight = ref(0)
 const map = ref<InstanceType<typeof MapCanvas>>()
 const sheet = ref<InstanceType<typeof BottomSheet>>()
@@ -51,10 +54,7 @@ const padding = computed<MapPadding>(() =>
     : { top: 90, right: 50, bottom: Math.min(sheetHeight.value, viewportHeight.value * 0.5) + 40, left: 50 },
 )
 
-const placeholders: Record<'guide' | 'trips', { title: string; text: string }> = {
-  guide: { title: 'Guide', text: 'Tour-guide notes for each stop, in visit order.' },
-  trips: { title: 'Trips', text: 'Create and switch between trips.' },
-}
+const titles: Record<TabId, string> = { day: 'Day', explore: 'Explore', guide: 'Guide', trips: 'Trips' }
 
 function selectStop(id: string) {
   selectedId.value = id
@@ -68,14 +68,29 @@ async function addPlace(place: ResolvedPlace) {
   if (!trip.error) tab.value = 'day'
 }
 
+async function setEndpoint(place: ResolvedPlace) {
+  const kind = picking.value
+  picking.value = undefined
+  if (kind) await trip.setEndpoint(kind, place)
+}
+
+function returnToStart() {
+  if (trip.day?.start_place) trip.setEndpoint('end', trip.day.start_place)
+}
+
 async function removeSelected() {
   const id = selectedId.value
   selectedId.value = undefined
   if (id) await trip.removeStop(id)
 }
 
-// A stop selected on one day must not stay open on another.
-watch(() => trip.day?.id, () => (selectedId.value = undefined))
+// A stop selected on one day must not stay open on another, nor a half-finished pick.
+watch(() => trip.day?.id, () => {
+  selectedId.value = undefined
+  picking.value = undefined
+})
+// Switching tabs abandons the search for a start or end point.
+watch(tab, () => (picking.value = undefined))
 
 onMounted(trip.load)
 </script>
@@ -95,8 +110,9 @@ onMounted(trip.load)
 
     <BottomSheet ref="sheet" @height="sheetHeight = $event">
       <template #header>
+        <h1 v-if="picking" class="title">{{ picking === 'start' ? 'Start point' : 'End point' }}</h1>
         <DayHeader
-          v-if="tab === 'day' && trip.day"
+          v-else-if="tab === 'day' && trip.day"
           :date="trip.day.date"
           :has-previous="trip.dayIndex > 0"
           :has-next="trip.dayIndex < trip.days.length - 1"
@@ -104,12 +120,16 @@ onMounted(trip.load)
           @next="trip.stepDay(1)"
           @pick-date="trip.goToDate"
         />
-        <h1 v-else class="title">{{ tab === 'day' ? 'Day' : tab === 'explore' ? 'Explore' : placeholders[tab].title }}</h1>
+        <h1 v-else class="title">{{ titles[tab] }}</h1>
       </template>
 
       <p v-if="trip.error" class="error" role="alert">{{ trip.error }}</p>
 
-      <template v-if="tab === 'day'">
+      <template v-if="picking">
+        <button class="cancel" @click="picking = undefined">Cancel</button>
+        <ExploreSearch :bias="() => map?.searchBias()" @add="setEndpoint" @focus="sheet?.expand()" />
+      </template>
+      <template v-else-if="tab === 'day'">
         <p v-if="trip.loading" class="coming">Loading…</p>
         <StopDetail
           v-else-if="selectedStop"
@@ -137,6 +157,10 @@ onMounted(trip.load)
             @select="selectStop"
             @reorder="trip.reorder"
             @mode="(id, mode) => trip.updateStop(id, { travel_mode: mode })"
+            @start-mode="trip.setStartTravelMode"
+            @pick-endpoint="picking = $event"
+            @clear-endpoint="trip.setEndpoint($event, null)"
+            @return-to-start="returnToStart"
           />
         </template>
       </template>
@@ -146,7 +170,8 @@ onMounted(trip.load)
         @add="addPlace"
         @focus="sheet?.expand()"
       />
-      <p v-else class="coming">{{ placeholders[tab].text }} Not built yet.</p>
+      <GuideList v-else-if="tab === 'guide'" @select="selectStop" />
+      <p v-else class="coming">Create and switch between trips. Not built yet.</p>
     </BottomSheet>
 
     <TabBar v-model="tab" />
@@ -237,6 +262,13 @@ onMounted(trip.load)
   font-weight: 500;
   color: #fff;
   background: var(--accent);
+}
+
+.cancel {
+  margin: 0 0 10px -4px;
+  padding: 4px;
+  font-size: 15px;
+  color: var(--accent);
 }
 
 .coming {

@@ -46,6 +46,7 @@ export type Database = {
           id: string
           start_place_id: string | null
           start_time: string
+          start_travel_mode: string | null
           trip_id: string
         }
         Insert: {
@@ -54,6 +55,7 @@ export type Database = {
           id?: string
           start_place_id?: string | null
           start_time?: string
+          start_travel_mode?: string | null
           trip_id: string
         }
         Update: {
@@ -62,6 +64,7 @@ export type Database = {
           id?: string
           start_place_id?: string | null
           start_time?: string
+          start_travel_mode?: string | null
           trip_id?: string
         }
         Relationships: [

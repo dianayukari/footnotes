@@ -30,10 +30,27 @@ export interface ItineraryLeg {
   path?: { lat: number; lng: number }[]
 }
 
+/** Where the day starts or ends, e.g. the hotel. Not a visit, so it has no duration. */
+export interface ItineraryEndpoint {
+  name: string
+  category: Category
+  lat: number
+  lng: number
+  /** When the traveller leaves the start or reaches the end ("HH:MM:SS"). */
+  time?: string
+}
+
 export interface ItineraryDay {
   date: string
   stops: ItineraryStop[]
   legs: ItineraryLeg[]
+  start?: ItineraryEndpoint
+  end?: ItineraryEndpoint
+  /** From the start point to the first stop, and from the last stop to the end point. */
+  startLeg?: ItineraryLeg
+  endLeg?: ItineraryLeg
 }
+
+export type EndpointKind = 'start' | 'end'
 
 export type TabId = 'day' | 'explore' | 'guide' | 'trips'

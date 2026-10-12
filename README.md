@@ -30,6 +30,17 @@ After your first sign-in, make yourself admin once in the SQL editor:
 update public.profiles set approved = true, is_admin = true where email = 'you@example.com';
 ```
 
+## Guide notes
+
+`supabase/functions/place-info` writes the tour-guide note and suggested visit length for a place
+with OpenAI, then stores them so each place is generated once. Deploy it and set its key with:
+
+```sh
+supabase functions deploy place-info
+supabase secrets set OPENAI_API_KEY=sk-...
+supabase secrets set OPENAI_MODEL=...   # optional; defaults to gpt-4o-mini
+```
+
 ## Deploy
 
 Pushing to `main` runs `.github/workflows/deploy.yml`. It needs Pages set to "GitHub Actions" as

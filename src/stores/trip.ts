@@ -4,9 +4,12 @@ import { supabase } from '@/lib/supabase'
 import { todayIso } from '@/lib/format'
 import type { ResolvedPlace } from '@/lib/places'
 import type { Day, Place, Stop, Trip } from '@/types/db'
-import type { TravelMode } from '@/types/itinerary'
+import type { EndpointKind, TravelMode } from '@/types/itinerary'
 
 export type StopWithPlace = Stop & { place: Place }
+export type DayWithPlaces = Day & { start_place: Place | null; end_place: Place | null }
+
+const DAY_COLUMNS = '*, start_place:places!days_start_place_id_fkey(*), end_place:places!days_end_place_id_fkey(*)'
 export type StopPatch = Partial<Pick<Stop, 'duration_minutes' | 'fixed_arrival' | 'notes'>> & {
   /** How to travel from this stop to the next; null lets the app choose. */
   travel_mode?: TravelMode | null
@@ -14,11 +17,17 @@ export type StopPatch = Partial<Pick<Stop, 'duration_minutes' | 'fixed_arrival' 
 
 export const useTripStore = defineStore('trip', () => {
   const trip = ref<Trip | null>(null)
-  const days = ref<Day[]>([])
+  const days = ref<DayWithPlaces[]>([])
   const dayId = ref<string>()
   const stops = ref<StopWithPlace[]>([])
   const loading = ref(true)
   const error = ref('')
+  /** Why guide notes could not be loaded, by place id. */
+  const infoErrors = ref<Record<string, string>>({})
+
+  // Stops inserted with this default take the suggested visit length once it is known.
+  const DEFAULT_DURATION = 60
+  const infoRequests = new Map<string, Promise<Place | undefined>>()
 
   const day = computed(() => days.value.find((d) => d.id === dayId.value))
   const dayIndex = computed(() => days.value.findIndex((d) => d.id === dayId.value))
@@ -42,9 +51,9 @@ export const useTripStore = defineStore('trip', () => {
       trip.value = created.data
     }
 
-    const loaded = await supabase.from('days').select('*').eq('trip_id', trip.value!.id).order('date')
+    const loaded = await supabase.from('days').select(DAY_COLUMNS).eq('trip_id', trip.value!.id).order('date')
     if (fail(loaded.error?.message)) return (loading.value = false)
-    days.value = loaded.data ?? []
+    days.value = (loaded.data ?? []) as DayWithPlaces[]
 
     if (days.value.length === 0) await goToDate(todayIso())
     else await selectDay((days.value.find((d) => d.date >= todayIso()) ?? days.value.at(-1)!).id)
@@ -70,17 +79,41 @@ export const useTripStore = defineStore('trip', () => {
     if (!trip.value) return
     const { data, error: e } = await supabase.from('days').insert({ trip_id: trip.value.id, date }).select().single()
     if (fail(e?.message) || !data) return
-    days.value = [...days.value, data].sort((a, b) => a.date.localeCompare(b.date))
+    const created: DayWithPlaces = { ...data, start_place: null, end_place: null }
+    days.value = [...days.value, created].sort((a, b) => a.date.localeCompare(b.date))
     await selectDay(data.id)
   }
 
-  async function setStartTime(startTime: string) {
+  /** Applies a change to the current day at once and rolls it back if saving fails. */
+  async function patchDay(local: Partial<DayWithPlaces>, saved: Partial<Day>) {
     const current = day.value
     if (!current) return
     const before = days.value
-    days.value = before.map((d) => (d.id === current.id ? { ...d, start_time: startTime } : d))
-    const { error: e } = await supabase.from('days').update({ start_time: startTime }).eq('id', current.id)
+    days.value = before.map((d) => (d.id === current.id ? { ...d, ...local } : d))
+    const { error: e } = await supabase.from('days').update(saved).eq('id', current.id)
     if (fail(e?.message)) days.value = before
+  }
+
+  const setStartTime = (startTime: string) => patchDay({ start_time: startTime }, { start_time: startTime })
+
+  /** How to travel from the start point to the first stop; null lets the app choose. */
+  const setStartTravelMode = (mode: TravelMode | null) =>
+    patchDay({ start_travel_mode: mode }, { start_travel_mode: mode })
+
+  /** Sets or clears where the day starts or ends. */
+  async function setEndpoint(kind: EndpointKind, place: ResolvedPlace | Place | null) {
+    if (place) {
+      const { place_id, name, lat, lng, address, types, utc_offset_minutes } = place
+      const saved = await supabase
+        .from('places')
+        .upsert({ place_id, name, lat, lng, address, types, utc_offset_minutes }, { onConflict: 'place_id', ignoreDuplicates: true })
+      if (fail(saved.error?.message)) return
+    }
+    // A stored place may carry guide notes the freshly searched one lacks; keep whichever is fuller.
+    const full = place && ({ guide: null, suggested_minutes: null, created_at: '', ...place } as Place)
+    const id = place?.place_id ?? null
+    if (kind === 'start') await patchDay({ start_place: full, start_place_id: id }, { start_place_id: id })
+    else await patchDay({ end_place: full, end_place_id: id }, { end_place_id: id })
   }
 
   function stepDay(offset: -1 | 1) {
@@ -102,7 +135,47 @@ export const useTripStore = defineStore('trip', () => {
       .single()
     if (fail(e?.message) || !data) return
     stops.value = [...stops.value, data as StopWithPlace]
+    applySuggestedDuration(data.id, place.place_id)
     return data.id
+  }
+
+  /**
+   * Fetches a place's guide notes and suggested visit length, generating them on first use.
+   * Concurrent calls for the same place share one request.
+   */
+  function loadPlaceInfo(placeId: string) {
+    const known = stops.value.find((s) => s.place_id === placeId)?.place
+    if (known?.guide && known.suggested_minutes) return Promise.resolve(known)
+
+    let request = infoRequests.get(placeId)
+    if (!request) {
+      request = (async () => {
+        const { [placeId]: _cleared, ...rest } = infoErrors.value
+        infoErrors.value = rest
+        const { data, error: e } = await supabase.functions.invoke<Pick<Place, 'guide' | 'suggested_minutes'>>(
+          'place-info',
+          { body: { place_id: placeId } },
+        )
+        if (e || !data) {
+          // The function's own explanation is in the response body, not in the error message.
+          const detail = await (e as { context?: Response })?.context?.json?.().catch(() => null)
+          infoErrors.value = { ...infoErrors.value, [placeId]: detail?.error ?? e?.message ?? 'No answer' }
+          return undefined
+        }
+        stops.value = stops.value.map((s) => (s.place_id === placeId ? { ...s, place: { ...s.place, ...data } } : s))
+        return stops.value.find((s) => s.place_id === placeId)?.place
+      })().finally(() => infoRequests.delete(placeId))
+      infoRequests.set(placeId, request)
+    }
+    return request
+  }
+
+  async function applySuggestedDuration(stopId: string, placeId: string) {
+    const place = await loadPlaceInfo(placeId)
+    const stop = stops.value.find((s) => s.id === stopId)
+    // Leave the stop alone if the traveller has already set their own duration.
+    if (!place?.suggested_minutes || !stop || stop.duration_minutes !== DEFAULT_DURATION) return
+    if (place.suggested_minutes !== DEFAULT_DURATION) await updateStop(stopId, { duration_minutes: place.suggested_minutes })
   }
 
   async function updateStop(id: string, patch: StopPatch) {
@@ -137,7 +210,7 @@ export const useTripStore = defineStore('trip', () => {
   }
 
   return {
-    trip, days, day, dayIndex, stops, loading, error,
-    load, selectDay, goToDate, setStartTime, stepDay, addPlace, updateStop, removeStop, reorder,
+    trip, days, day, dayIndex, stops, loading, error, infoErrors,
+    load, selectDay, goToDate, setStartTime, setStartTravelMode, setEndpoint, stepDay, addPlace, loadPlaceInfo, updateStop, removeStop, reorder,
   }
 })

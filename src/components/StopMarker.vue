@@ -2,7 +2,7 @@
 import { categories } from '@/lib/categories'
 import type { ItineraryStop } from '@/types/itinerary'
 
-defineProps<{ stop: ItineraryStop }>()
+defineProps<{ stop: Pick<ItineraryStop, 'name' | 'category'> }>()
 </script>
 
 <template>

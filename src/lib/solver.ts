@@ -11,6 +11,12 @@ export interface SolverStop {
 /** travel[i][j] is the travel time from stop i to stop j. */
 export type TravelMatrix = number[][]
 
+/** Optional fixed places the day starts from and ends at, as travel times to and from each stop. */
+export interface Ends {
+  fromStart?: number[]
+  toEnd?: number[]
+}
+
 export interface Visit {
   id: string
   arrive: number
@@ -33,12 +39,18 @@ export interface Solution {
 /** Largest day the exact search handles; its cost grows with 2^n. */
 export const EXACT_LIMIT = 12
 
-export function schedule(order: number[], stops: SolverStop[], travel: TravelMatrix, start: number): Visit[] {
+export function schedule(
+  order: number[],
+  stops: SolverStop[],
+  travel: TravelMatrix,
+  start: number,
+  ends: Ends = {},
+): Visit[] {
   const visits: Visit[] = []
   let clock = start
   order.forEach((index, n) => {
     const stop = stops[index]!
-    const arrive = n === 0 ? clock : clock + travel[order[n - 1]!]![index]!
+    const arrive = clock + (n === 0 ? (ends.fromStart?.[index] ?? 0) : travel[order[n - 1]!]![index]!)
     const fixed = stop.fixedArrival
     const begin = fixed !== undefined && fixed > arrive ? fixed : arrive
     const late = fixed !== undefined && arrive > fixed ? arrive - fixed : 0
@@ -48,8 +60,9 @@ export function schedule(order: number[], stops: SolverStop[], travel: TravelMat
   return visits
 }
 
-export function totalTravel(order: number[], travel: TravelMatrix): number {
-  let sum = 0
+export function totalTravel(order: number[], travel: TravelMatrix, ends: Ends = {}): number {
+  if (order.length === 0) return 0
+  let sum = (ends.fromStart?.[order[0]!] ?? 0) + (ends.toEnd?.[order[order.length - 1]!] ?? 0)
   for (let n = 1; n < order.length; n++) sum += travel[order[n - 1]!]![order[n]!]!
   return sum
 }
@@ -66,7 +79,7 @@ interface Label {
  * both departure time and travel cost, because an earlier departure can rescue a later fixed time
  * even when it costs more travel. Returns null when no order meets every fixed time.
  */
-function solveExact(stops: SolverStop[], travel: TravelMatrix, start: number): number[] | null {
+function solveExact(stops: SolverStop[], travel: TravelMatrix, start: number, ends: Ends): number[] | null {
   const n = stops.length
   const full = (1 << n) - 1
   const labels: Label[][] = Array.from({ length: (full + 1) * n }, () => [])
@@ -85,8 +98,9 @@ function solveExact(stops: SolverStop[], travel: TravelMatrix, start: number): n
   }
 
   for (let j = 0; j < n; j++) {
-    const depart = visit(j, start)
-    if (depart !== null) add(1 << j, j, { depart, cost: 0, prevLast: -1, prev: null })
+    const hop = ends.fromStart?.[j] ?? 0
+    const depart = visit(j, start + hop)
+    if (depart !== null) add(1 << j, j, { depart, cost: hop, prevLast: -1, prev: null })
   }
 
   // Extending a set only ever produces a larger mask, so ascending order sees each state complete.
@@ -106,11 +120,14 @@ function solveExact(stops: SolverStop[], travel: TravelMatrix, start: number): n
 
   let best: Label | null = null
   let bestLast = -1
+  let bestCost = Infinity
   for (let last = 0; last < n; last++) {
     for (const label of labels[full * n + last]!) {
-      if (!best || label.cost < best.cost || (label.cost === best.cost && label.depart < best.depart)) {
+      const cost = label.cost + (ends.toEnd?.[last] ?? 0)
+      if (cost < bestCost || (cost === bestCost && label.depart < best!.depart)) {
         best = label
         bestLast = last
+        bestCost = cost
       }
     }
   }
@@ -128,19 +145,20 @@ function solveExact(stops: SolverStop[], travel: TravelMatrix, start: number): n
  * time order, then each remaining stop takes the position that adds the least travel without
  * making any fixed stop late. Returns null when some stop has no such position.
  */
-function solveHeuristic(stops: SolverStop[], travel: TravelMatrix, start: number): number[] | null {
+function solveHeuristic(stops: SolverStop[], travel: TravelMatrix, start: number, ends: Ends): number[] | null {
   const indices = stops.map((_, i) => i)
   const order = indices
     .filter((i) => stops[i]!.fixedArrival !== undefined)
     .sort((a, b) => stops[a]!.fixedArrival! - stops[b]!.fixedArrival!)
-  const onTime = (candidate: number[]) => schedule(candidate, stops, travel, start).every((v) => v.late === 0)
+  const onTime = (candidate: number[]) => schedule(candidate, stops, travel, start, ends).every((v) => v.late === 0)
+  const cost = (candidate: number[]) => totalTravel(candidate, travel, ends)
   if (!onTime(order)) return null
 
   for (const i of indices.filter((i) => stops[i]!.fixedArrival === undefined)) {
     let best: number[] | null = null
     for (let at = 0; at <= order.length; at++) {
       const candidate = [...order.slice(0, at), i, ...order.slice(at)]
-      if (onTime(candidate) && (!best || totalTravel(candidate, travel) < totalTravel(best, travel))) best = candidate
+      if (onTime(candidate) && (!best || cost(candidate) < cost(best))) best = candidate
     }
     if (!best) return null
     order.splice(0, order.length, ...best)
@@ -148,25 +166,26 @@ function solveHeuristic(stops: SolverStop[], travel: TravelMatrix, start: number
   return order
 }
 
-export function optimise(stops: SolverStop[], travel: TravelMatrix, start: number): Solution {
+export function optimise(stops: SolverStop[], travel: TravelMatrix, start: number, ends: Ends = {}): Solution {
   if (stops.length === 0) return { order: [], exact: true, unmet: [] }
   const exact = stops.length <= EXACT_LIMIT
-  const solve = exact ? solveExact : solveHeuristic
+  const solve = (candidates: SolverStop[]) => (exact ? solveExact : solveHeuristic)(candidates, travel, start, ends)
+  const cost = (candidate: number[]) => totalTravel(candidate, travel, ends)
 
-  const order = solve(stops, travel, start)
+  const order = solve(stops)
   if (order) return { order, exact, unmet: [] }
 
   // Not every fixed time can be met. Prefer an order that breaks only one of them.
   const relaxed = (drop: (s: SolverStop) => boolean) =>
     stops.map((s) => (drop(s) ? { ...s, fixedArrival: undefined } : s))
-  const lateIds = (o: number[]) => schedule(o, stops, travel, start).filter((v) => v.late > 0).map((v) => v.id)
+  const lateIds = (o: number[]) => schedule(o, stops, travel, start, ends).filter((v) => v.late > 0).map((v) => v.id)
 
   let best: number[] | null = null
   for (const stop of stops) {
     if (stop.fixedArrival === undefined) continue
-    const candidate = solve(relaxed((s) => s.id === stop.id), travel, start)
-    if (candidate && (!best || totalTravel(candidate, travel) < totalTravel(best, travel))) best = candidate
+    const candidate = solve(relaxed((s) => s.id === stop.id))
+    if (candidate && (!best || cost(candidate) < cost(best))) best = candidate
   }
-  best ??= solve(relaxed(() => true), travel, start) ?? stops.map((_, i) => i)
+  best ??= solve(relaxed(() => true)) ?? stops.map((_, i) => i)
   return { order: best, exact, unmet: lateIds(best) }
 }

@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { EllipsisVertical, LocateFixed, Scan, Settings, WandSparkles } from 'lucide-vue-next'
+import { EllipsisVertical, LocateFixed, Scan, WandSparkles } from 'lucide-vue-next'
 import BottomSheet from '@/components/BottomSheet.vue'
 import DayHeader from '@/components/DayHeader.vue'
 import DayTimeline from '@/components/DayTimeline.vue'
 import MapCanvas, { type MapPadding } from '@/components/MapCanvas.vue'
+import SettingsMenu from '@/components/SettingsMenu.vue'
 import TabBar from '@/components/TabBar.vue'
 import { placeholderDay } from '@/data/placeholder'
 import { useViewport } from '@/lib/layout'
@@ -46,7 +47,7 @@ function selectStop(id: string) {
     <MapCanvas ref="map" :day="day" :padding="padding" @select-stop="selectStop" />
 
     <div class="controls left">
-      <button class="control" aria-label="Settings"><Settings :size="22" /></button>
+      <SettingsMenu />
       <button class="control" aria-label="More"><EllipsisVertical :size="22" /></button>
     </div>
     <div class="controls right">
@@ -95,7 +96,7 @@ function selectStop(id: string) {
   right: 16px;
 }
 
-.control {
+.controls :deep(.control) {
   display: grid;
   place-items: center;
   width: 46px;

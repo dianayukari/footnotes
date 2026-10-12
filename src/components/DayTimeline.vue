@@ -4,10 +4,20 @@ import { BusFront, Footprints, GripVertical, Lock } from 'lucide-vue-next'
 import Sortable from 'sortablejs'
 import { categories } from '@/lib/categories'
 import { formatDuration, formatTime } from '@/lib/format'
-import type { ItineraryDay, ItineraryStop } from '@/types/itinerary'
+import type { ItineraryDay, ItineraryStop, TravelMode } from '@/types/itinerary'
 
 const props = defineProps<{ day: ItineraryDay; selectedId?: string }>()
-const emit = defineEmits<{ select: [id: string]; reorder: [ids: string[]] }>()
+const emit = defineEmits<{
+  select: [id: string]
+  reorder: [ids: string[]]
+  /** The traveller picked how to leave a stop for the next one. */
+  mode: [stopId: string, mode: TravelMode]
+}>()
+
+const modes = [
+  { id: 'walk', label: 'Walk', icon: Footprints },
+  { id: 'transit', label: 'Public transit', icon: BusFront },
+] as const
 
 const list = ref<HTMLElement>()
 let sortable: Sortable | undefined
@@ -65,10 +75,23 @@ function formatKm(km: number) {
         <span class="grip" aria-label="Drag to reorder"><GripVertical :size="18" /></span>
       </div>
       <div v-if="day.legs[i]" class="leg">
-        <component :is="day.legs[i]!.mode === 'walk' ? Footprints : BusFront" :size="18" />
-        <div>
+        <div class="leg-text">
           <div class="leg-title">{{ day.legs[i]!.summary }}</div>
           <div class="leg-meta">{{ formatDuration(day.legs[i]!.minutes) }} · {{ formatKm(day.legs[i]!.km) }}</div>
+        </div>
+        <div class="modes" role="radiogroup" :aria-label="`How to get from ${stop.name} to the next stop`">
+          <button
+            v-for="m in modes"
+            :key="m.id"
+            role="radio"
+            :aria-checked="day.legs[i]!.mode === m.id"
+            :aria-label="m.label"
+            :title="m.label"
+            :class="{ active: day.legs[i]!.mode === m.id }"
+            @click="emit('mode', stop.id, m.id)"
+          >
+            <component :is="m.icon" :size="16" />
+          </button>
         </div>
       </div>
     </li>
@@ -176,8 +199,35 @@ function formatKm(km: number) {
   display: flex;
   gap: 12px;
   align-items: center;
-  padding: 0 0 10px 44px;
+  padding: 0 0 10px 48px;
   color: var(--text-muted);
+}
+
+.leg-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.modes {
+  display: flex;
+  flex: none;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--control);
+}
+
+.modes button {
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 30px;
+  border-radius: 9px;
+  color: var(--text-muted);
+}
+
+.modes button.active {
+  color: #fff;
+  background: var(--accent);
 }
 
 .leg-title {

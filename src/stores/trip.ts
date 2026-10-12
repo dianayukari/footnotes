@@ -4,9 +4,13 @@ import { supabase } from '@/lib/supabase'
 import { todayIso } from '@/lib/format'
 import type { ResolvedPlace } from '@/lib/places'
 import type { Day, Place, Stop, Trip } from '@/types/db'
+import type { TravelMode } from '@/types/itinerary'
 
 export type StopWithPlace = Stop & { place: Place }
-export type StopPatch = Partial<Pick<Stop, 'duration_minutes' | 'fixed_arrival' | 'notes'>>
+export type StopPatch = Partial<Pick<Stop, 'duration_minutes' | 'fixed_arrival' | 'notes'>> & {
+  /** How to travel from this stop to the next; null lets the app choose. */
+  travel_mode?: TravelMode | null
+}
 
 export const useTripStore = defineStore('trip', () => {
   const trip = ref<Trip | null>(null)

@@ -164,6 +164,7 @@ export type Database = {
           notes: string | null
           place_id: string
           position: number
+          travel_mode: string | null
         }
         Insert: {
           created_at?: string
@@ -174,6 +175,7 @@ export type Database = {
           notes?: string | null
           place_id: string
           position: number
+          travel_mode?: string | null
         }
         Update: {
           created_at?: string
@@ -184,6 +186,7 @@ export type Database = {
           notes?: string | null
           place_id?: string
           position?: number
+          travel_mode?: string | null
         }
         Relationships: [
           {

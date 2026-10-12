@@ -4,17 +4,14 @@ import { minutesToTime, timeToMinutes } from '@/lib/format'
 import { categoryFromTypes } from '@/lib/places'
 import { departureInstant, estimateWalk, fetchLegRoute, fetchMatrix, type LegRoute, type Travel } from '@/lib/routing'
 import { optimise as solve, schedule, type SolverStop, type Visit } from '@/lib/solver'
-import { useTripStore } from './trip'
+import { useTripStore, type StopWithPlace } from './trip'
 import type { Place } from '@/types/db'
 import type { ItineraryDay, ItineraryLeg, TravelMode } from '@/types/itinerary'
 
-/** Legs up to this many minutes on foot are walked even when transit would be faster. */
+/** Unless the traveller picks a mode, legs up to this many minutes on foot are walked. */
 export const WALK_THRESHOLD_MINUTES = 15
 
-interface Pair {
-  walk: Travel | null
-  transit: Travel | null
-}
+const MODES: TravelMode[] = ['walk', 'transit']
 
 interface Choice extends Travel {
   mode: TravelMode
@@ -29,7 +26,8 @@ export const useRouteStore = defineStore('route', () => {
   const trip = useTripStore()
 
   // Travel times between places, kept per date because transit depends on the weekday.
-  const pairs = new Map<string, Pair>()
+  // A null value means Google found no route for that pair.
+  const pairs = new Map<string, Travel | null>()
   const covered = new Map<string, Set<string>>()
   const legRoutes = new Map<string, LegRoute | null>()
 
@@ -42,12 +40,13 @@ export const useRouteStore = defineStore('route', () => {
   // Bumped on every recompute so results of a superseded run are dropped.
   let run = 0
 
-  const pairKey = (date: string, a: string, b: string) => `${date}|${a}|${b}`
+  const pairKey = (date: string, mode: TravelMode, a: string, b: string) => `${date}|${mode}|${a}|${b}`
 
-  /** Fetches travel times for place pairs that are not cached yet. */
-  async function ensureMatrix(date: string, start: number, places: Place[]) {
-    const known = covered.get(date) ?? new Set<string>()
-    covered.set(date, known)
+  /** Fetches one mode's travel times for place pairs that are not cached yet. */
+  async function ensureModeMatrix(date: string, start: number, places: Place[], mode: TravelMode) {
+    const coverKey = `${date}|${mode}`
+    const known = covered.get(coverKey) ?? new Set<string>()
+    covered.set(coverKey, known)
     const fresh = places.filter((p) => !known.has(p.place_id))
     if (fresh.length === 0) return
     const old = places.filter((p) => known.has(p.place_id))
@@ -59,28 +58,31 @@ export const useRouteStore = defineStore('route', () => {
 
     await Promise.all(
       blocks.map(async ([from, to]) => {
-        const [walk, transit] = await Promise.all([
-          fetchMatrix(from, to, 'walk', departure),
-          fetchMatrix(from, to, 'transit', departure),
-        ])
+        const matrix = await fetchMatrix(from, to, mode, departure)
         from.forEach((a, i) =>
-          to.forEach((b, j) => {
-            pairs.set(pairKey(date, a.place_id, b.place_id), { walk: walk[i]![j] ?? null, transit: transit[i]![j] ?? null })
-          }),
+          to.forEach((b, j) => pairs.set(pairKey(date, mode, a.place_id, b.place_id), matrix[i]![j] ?? null)),
         )
       }),
     )
     for (const p of fresh) known.add(p.place_id)
   }
 
-  function choose(date: string, a: Place, b: Place): Choice {
+  function ensureMatrix(date: string, start: number, places: Place[]) {
+    return Promise.all(MODES.map((mode) => ensureModeMatrix(date, start, places, mode)))
+  }
+
+  /** How to get from one stop to another: the mode picked on the origin stop, or the better one. */
+  function choose(date: string, from: StopWithPlace, to: StopWithPlace): Choice {
+    const a = from.place
+    const b = to.place
     if (a.place_id === b.place_id) return { mode: 'walk', minutes: 0, meters: 0 }
-    const pair = pairs.get(pairKey(date, a.place_id, b.place_id))
-    const walk = pair?.walk ?? estimateWalk(a, b)
-    const transit = pair?.transit
-    if (!transit || walk.minutes <= WALK_THRESHOLD_MINUTES || walk.minutes <= transit.minutes) {
-      return { mode: 'walk', ...walk }
-    }
+    const walk = pairs.get(pairKey(date, 'walk', a.place_id, b.place_id)) ?? estimateWalk(a, b)
+    const transit = pairs.get(pairKey(date, 'transit', a.place_id, b.place_id))
+    // Google answers a transit request with a walking route when no line helps, so a missing
+    // result means there is genuinely no route and walking is the fallback.
+    if (from.travel_mode === 'walk' || !transit) return { mode: 'walk', ...walk }
+    if (from.travel_mode === 'transit') return { mode: 'transit', ...transit }
+    if (walk.minutes <= WALK_THRESHOLD_MINUTES || walk.minutes <= transit.minutes) return { mode: 'walk', ...walk }
     return { mode: 'transit', ...transit }
   }
 
@@ -97,7 +99,7 @@ export const useRouteStore = defineStore('route', () => {
   }
 
   function travelMatrix(date: string) {
-    return trip.stops.map((a) => trip.stops.map((b) => choose(date, a.place, b.place).minutes))
+    return trip.stops.map((a) => trip.stops.map((b) => choose(date, a, b).minutes))
   }
 
   async function recompute() {
@@ -123,7 +125,7 @@ export const useRouteStore = defineStore('route', () => {
     }
     if (id !== run) return
 
-    const chosen = stops.slice(0, -1).map((s, i) => choose(day.date, s.place, stops[i + 1]!.place))
+    const chosen = stops.slice(0, -1).map((s, i) => choose(day.date, s, stops[i + 1]!))
     const travel = travelMatrix(day.date)
     const draft = schedule(order, solverStops(), travel, start)
     visits.value = draft
@@ -229,7 +231,7 @@ export const useRouteStore = defineStore('route', () => {
       [
         trip.day?.id,
         trip.day?.start_time,
-        ...trip.stops.map((s) => `${s.id}:${s.place_id}:${s.duration_minutes}:${s.fixed_arrival}`),
+        ...trip.stops.map((s) => `${s.id}:${s.place_id}:${s.duration_minutes}:${s.fixed_arrival}:${s.travel_mode}`),
       ].join('|'),
     () => {
       notice.value = ''

@@ -132,7 +132,12 @@ onMounted(trip.load)
           <p v-for="problem in problems" :key="problem" class="error" role="alert">{{ problem }}</p>
           <p v-if="route.error" class="error" role="alert">{{ route.error }}</p>
           <p v-if="route.notice" class="notice">{{ route.notice }}</p>
-          <DayTimeline :day="day" @select="selectStop" @reorder="trip.reorder" />
+          <DayTimeline
+            :day="day"
+            @select="selectStop"
+            @reorder="trip.reorder"
+            @mode="(id, mode) => trip.updateStop(id, { travel_mode: mode })"
+          />
         </template>
       </template>
       <ExploreSearch
